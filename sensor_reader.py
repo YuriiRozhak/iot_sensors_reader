@@ -4,9 +4,9 @@ import board
 import RPi.GPIO as GPIO
 from smbus2 import SMBus
 
-import sys
 import math
-import operator
+
+import requests
 
 t = 22 # assume current temperature. Recommended to measure with DHT22
 h = 65 # assume current humidity. Recommended to measure with DHT22
@@ -167,6 +167,17 @@ def getCorrectedPPMRes(x):
     correctedPPM = getCorrectedPPM(t,h,CORA,CORB,CORC,CORD,CORE,CORF,CORG,value_pin,RLOAD,PARA,RZERO,PARB)
     return correctedPPM
 
+
+
+def send_data_to_server(data):
+    url = "https://your-server-url.com/sensor/data/add/all"
+    try:
+        response = requests.post(url, json=data)
+        response.raise_for_status()
+        print(f"Data sent to server: {data}")
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to send data to server: {e}")
+
 def read_sensors():
     with SMBus(1) as bus:
         #MQ-3 connected to AIN1 on YL-40
@@ -212,6 +223,19 @@ def read_sensors():
                         timestamp, temperature_f, temperature_c, humidity,gassesPPM, concentration, light_sensor_bool, motion_sensor_bool
                     )
                 )
+
+                # Collect data into a list
+                data = [
+                    {"value": humidity, "sensor": {"type": "humidity", "description": "Humidity sensor"}},
+                    {"value": temperature_c, "sensor": {"type": "temperature", "description": "Temperature sensor"}},
+                    {"value": gassesPPM, "sensor": {"type": "flamable", "description": "Flammable gases sensor"}},
+                    {"value": concentration, "sensor": {"type": "alcohol", "description": "Alcohol sensor"}},
+                    {"value": light_sensor_value, "sensor": {"type": "light", "description": "Light sensor"}},
+                    {"value": motion_sensor_value, "sensor": {"type": "motion", "description": "Motion sensor"}}
+                ]
+
+                # Send all data to server
+                send_data_to_server(data)
 
             except RuntimeError as error:
                 # Errors happen fairly often, DHT's are hard to read, just keep going
