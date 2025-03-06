@@ -3,13 +3,11 @@ import adafruit_dht
 import board
 import RPi.GPIO as GPIO
 from smbus2 import SMBus
-
 import math
-
 import requests
 
-t = 22 # assume current temperature. Recommended to measure with DHT22
-h = 65 # assume current humidity. Recommended to measure with DHT22
+t = 22  # assume current temperature. Recommended to measure with DHT22
+h = 65  # assume current humidity. Recommended to measure with DHT22
 
 # GPIO Pin
 LIGHT_SENSOR_PIN = 24
@@ -18,15 +16,9 @@ BUZZER_PIN = 21
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(LIGHT_SENSOR_PIN, GPIO.IN)
-
 GPIO.setup(MOTION_SENSOR_PIN, GPIO.IN)
 
 # Initial the dht device, with data pin connected to:
-# dhtDevice = adafruit_dht.DHT22(board.D4)
-
-# you can pass DHT22 use_pulseio=False if you wouldn't like to use pulseio.
-# This may be necessary on a Linux single board computer like the Raspberry Pi,
-# but it will not work in CircuitPython.
 dhtDevice = adafruit_dht.DHT22(board.D17, use_pulseio=False)
 
 def invert_bit(value):
@@ -37,7 +29,6 @@ def to_boolean(value):
 
 def boolean_to_string(value):
     return "True" if value else "False"
-
 
 # The load resistance on the board
 RLOAD = 10.0
@@ -74,7 +65,7 @@ def getCorrectionFactor(t,h,CORA,CORB,CORC,CORD,CORE,CORF,CORG):
     # above 20degC: fact = a * t + b * h + c
     # this assumes a linear dependency on humidity
     if t < 20:
-        return CORA * t * t - CORB * t + CORC - (h-33.)*CORD
+        return CORA * t * t - CORB * t + CORC - (h - 33.) * CORD
     else:
         return CORE * t + CORF * h + CORG
 
@@ -158,16 +149,14 @@ def map(x,in_min,in_max,out_min,out_max):
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
 def getCorrectedPPMRes(x):
-    value_ads = x # value obtained by ADS1115
-    value_pin = map((value_ads - 565), 0, 26690, 0, 1023) # 565 / 535 fix value
-    rzero = getRZero(value_pin,RLOAD,ATMOCO2,PARA,PARB)
-    correctedRZero = getCorrectedRZero(t,h,CORA,CORB,CORC,CORD,CORE,CORF,CORG,value_pin,RLOAD,ATMOCO2,PARA,PARB)
-    resistance = getResistance(value_pin,RLOAD)
-    ppm = getPPM(PARA,RZERO,PARB,value_pin,RLOAD)
-    correctedPPM = getCorrectedPPM(t,h,CORA,CORB,CORC,CORD,CORE,CORF,CORG,value_pin,RLOAD,PARA,RZERO,PARB)
+    value_ads = x  # value obtained by ADS1115
+    value_pin = map((value_ads - 565), 0, 26690, 0, 1023)  # 565 / 535 fix value
+    rzero = getRZero(value_pin, RLOAD, ATMOCO2, PARA, PARB)
+    correctedRZero = getCorrectedRZero(t, h, CORA, CORB, CORC, CORD, CORE, CORF, CORG, value_pin, RLOAD, ATMOCO2, PARA, PARB)
+    resistance = getResistance(value_pin, RLOAD)
+    ppm = getPPM(PARA, RZERO, PARB, value_pin, RLOAD)
+    correctedPPM = getCorrectedPPM(t, h, CORA, CORB, CORC, CORD, CORE, CORF, CORG, value_pin, RLOAD, PARA, RZERO, PARB)
     return correctedPPM
-
-
 
 def send_data_to_server(data):
     url = "https://your-server-url.com/sensor/data/add/all"
@@ -178,67 +167,96 @@ def send_data_to_server(data):
     except requests.exceptions.RequestException as e:
         print(f"Failed to send data to server: {e}")
 
+def read_alcohol_sensor(bus):
+    try:
+        alco_data = bus.read_word_data(0x48, 0x41)
+        concentration = (9.95 / 4096.0) * alco_data + 0.05
+        return {"value": concentration, "sensor": {"type": "alcohol", "description": "Alcohol sensor"}}
+    except Exception as e:
+        print(f"Failed to read alcohol sensor: {e}")
+        return None
+
+def read_flammable_gases_sensor(bus):
+    try:
+        gases_data = bus.read_word_data(0x48, 0x40)
+        gassesPPM = getCorrectedPPMRes(gases_data)
+        return {"value": gassesPPM, "sensor": {"type": "flamable", "description": "Flammable gases sensor"}}
+    except Exception as e:
+        print(f"Failed to read flammable gases sensor: {e}")
+        return None
+
+def read_light_sensor():
+    try:
+        light_sensor_value = GPIO.input(LIGHT_SENSOR_PIN)
+        return {"value": light_sensor_value, "sensor": {"type": "light", "description": "Light sensor"}}
+    except Exception as e:
+        print(f"Failed to read light sensor: {e}")
+        return None
+
+def read_motion_sensor():
+    try:
+        motion_sensor_value = GPIO.input(MOTION_SENSOR_PIN)
+        return {"value": motion_sensor_value, "sensor": {"type": "motion", "description": "Motion sensor"}}
+    except Exception as e:
+        print(f"Failed to read motion sensor: {e}")
+        return None
+
+def read_temperature_sensor():
+    try:
+        temperature_c = dhtDevice.temperature
+        return {"value": temperature_c, "sensor": {"type": "temperature", "description": "Temperature sensor"}}
+    except Exception as e:
+        print(f"Failed to read temperature sensor: {e}")
+        return None
+
+def read_humidity_sensor():
+    try:
+        humidity = dhtDevice.humidity
+        return {"value": humidity, "sensor": {"type": "humidity", "description": "Humidity sensor"}}
+    except Exception as e:
+        print(f"Failed to read humidity sensor: {e}")
+        return None
+
 def read_sensors():
     with SMBus(1) as bus:
-        #MQ-3 connected to AIN1 on YL-40
         device_address = 0x48  # Your ADC device address
 
         while True:
             try:
                 time.sleep(1)
-                #get readings from sensors
-                alco_data = bus.read_word_data(0x48, 0x41)
-                gases_data = bus.read_word_data(0x48, 0x40)
-                sensor_value = GPIO.input(LIGHT_SENSOR_PIN)  # Read digital value (0 or 1)
+                data = []
 
-                gassesPPM = getCorrectedPPMRes(gases_data)
-                concentration = (9.95 / 4096.0) * alco_data + 0.05
+                alcohol_data = read_alcohol_sensor(bus)
+                if alcohol_data:
+                    data.append(alcohol_data)
+
+                flammable_gases_data = read_flammable_gases_sensor(bus)
+                if flammable_gases_data:
+                    data.append(flammable_gases_data)
+
+                light_sensor_data = read_light_sensor()
+                if light_sensor_data:
+                    data.append(light_sensor_data)
+
+                motion_sensor_data = read_motion_sensor()
+                if motion_sensor_data:
+                    data.append(motion_sensor_data)
+
+                temperature_data = read_temperature_sensor()
+                if temperature_data:
+                    data.append(temperature_data)
+
+                humidity_data = read_humidity_sensor()
+                if humidity_data:
+                    data.append(humidity_data)
+
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-                light_sensor_value = GPIO.input(LIGHT_SENSOR_PIN)
-                motion_sensor_value = GPIO.input(MOTION_SENSOR_PIN)
-                motion_sensor_bool =  boolean_to_string(to_boolean(motion_sensor_value))
-                light_sensor_bool = boolean_to_string(to_boolean(invert_bit(light_sensor_value)))
-                temperature_c = dhtDevice.temperature
-                temperature_f = temperature_c * (9 / 5) + 32
-                humidity = dhtDevice.humidity
-
-                if sensor_value == 0:
-                    print("Light Sensor value is 0! Deactivating buzzer...")
-                    GPIO.setup(BUZZER_PIN, GPIO.IN)
-
-                if sensor_value == 1:
-                    print("Light Sensor value is 1! Activating buzzer...")
-                    GPIO.setup(BUZZER_PIN, GPIO.OUT)
-
-                print(f"[{timestamp}] Sensor Value: {sensor_value}")
-                # Output data to screen
-                #print("Raw_ADC : %.d" %alco_data)
-                print("Gasses  : %.2f ppm" %gassesPPM)
-                print("Alcohol : %.2f mg/l" %concentration)
-
-                # Print the values to the serial port
-
-                print(
-                    "{} Temp: {:.1f} F / {:.1f} C  Humidity: {}%   DANGER_GASSES:{} ppm ALCOHOL: {:.2f} mg/l LIGHT: {}  MOTION: {}".format(
-                        timestamp, temperature_f, temperature_c, humidity,gassesPPM, concentration, light_sensor_bool, motion_sensor_bool
-                    )
-                )
-
-                # Collect data into a list
-                data = [
-                    {"value": humidity, "sensor": {"type": "humidity", "description": "Humidity sensor"}},
-                    {"value": temperature_c, "sensor": {"type": "temperature", "description": "Temperature sensor"}},
-                    {"value": gassesPPM, "sensor": {"type": "flamable", "description": "Flammable gases sensor"}},
-                    {"value": concentration, "sensor": {"type": "alcohol", "description": "Alcohol sensor"}},
-                    {"value": light_sensor_value, "sensor": {"type": "light", "description": "Light sensor"}},
-                    {"value": motion_sensor_value, "sensor": {"type": "motion", "description": "Motion sensor"}}
-                ]
+                print(f"[{timestamp}] Sensor Data: {data}")
 
                 # Send all data to server
-                send_data_to_server(data)
+                # send_data_to_server(data)
 
             except RuntimeError as error:
-                # Errors happen fairly often, DHT's are hard to read, just keep going
                 print(error.args[0])
                 time.sleep(2.0)
                 continue
@@ -246,8 +264,6 @@ def read_sensors():
                 dhtDevice.exit()
                 raise error
 
-
-# Run the logger
 if __name__ == "__main__":
     try:
         read_sensors()
